@@ -10,108 +10,27 @@ import Combine
 
 final class MoviesListViewController: UIViewController {
     
+    enum Section: Hashable {
+        case movies
+    }
+    
     private let viewModel: MoviesListViewModel
     private weak var coordinator: MoviesCoordinator?
     private var cancellables = Set<AnyCancellable>()
     var dataSource: UICollectionViewDiffableDataSource<Section, Movie>?
     
     lazy var collectionView: UICollectionView = {
-        let layout = makeLayout()
-        let cv = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        cv.backgroundColor = .systemGroupedBackground
-        cv.translatesAutoresizingMaskIntoConstraints = false
-        cv.register(MovieCell.self, forCellWithReuseIdentifier: MovieCell.reuseIdentifier)
-        cv.delegate = self
-        cv.showsVerticalScrollIndicator = true
-        return cv
+        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
+        collectionView.backgroundColor = .systemGroupedBackground
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.register(MovieCell.self, forCellWithReuseIdentifier: MovieCell.reuseIdentifier)
+        collectionView.delegate = self
+        collectionView.showsVerticalScrollIndicator = true
+        return collectionView
     }()
     
-    private lazy var loadingView: UIView = {
-        let view = UIView()
-        view.backgroundColor = .systemBackground
-        view.translatesAutoresizingMaskIntoConstraints = false
-        
-        let indicator = UIActivityIndicatorView(style: .large)
-        indicator.color = .systemBlue
-        indicator.startAnimating()
-        indicator.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(indicator)
-        NSLayoutConstraint.activate([
-            indicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            indicator.centerYAnchor.constraint(equalTo: view.centerYAnchor)
-        ])
-        return view
-    }()
-    
-    private lazy var errorView: UIView = {
-        let view = UIView()
-        view.backgroundColor = .systemBackground
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.isHidden = true
-        
-        let imageView = UIImageView(image: UIImage(systemName: "wifi.exclamationmark"))
-        imageView.tintColor = .secondaryLabel
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        
-        let titleLabel = UILabel()
-        titleLabel.text = "Something went wrong"
-        titleLabel.font = .systemFont(ofSize: 20, weight: .semibold)
-        titleLabel.textAlignment = .center
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        self.errorTitleLabel = titleLabel
-        
-        let messageLabel = UILabel()
-        messageLabel.font = .systemFont(ofSize: 15)
-        messageLabel.textColor = .secondaryLabel
-        messageLabel.numberOfLines = 0
-        messageLabel.textAlignment = .center
-        messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        self.errorMessageLabel = messageLabel
-        
-        let retryButton = UIButton(type: .system)
-        retryButton.setTitle("Retry", for: .normal)
-        retryButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        retryButton.backgroundColor = .systemBlue
-        retryButton.setTitleColor(.white, for: .normal)
-        retryButton.layer.cornerRadius = 12
-        retryButton.translatesAutoresizingMaskIntoConstraints = false
-        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        
-        let stack = UIStackView(arrangedSubviews: [imageView, titleLabel, messageLabel, retryButton])
-        stack.axis = .vertical
-        stack.spacing = 16
-        stack.alignment = .center
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        
-        view.addSubview(stack)
-        NSLayoutConstraint.activate([
-            imageView.widthAnchor.constraint(equalToConstant: 60),
-            imageView.heightAnchor.constraint(equalToConstant: 60),
-            
-            retryButton.widthAnchor.constraint(equalToConstant: 160),
-            retryButton.heightAnchor.constraint(equalToConstant: 50),
-            
-            stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            stack.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32)
-        ])
-        return view
-    }()
-    
-    private let footerLoadingView: UIActivityIndicatorView = {
-        let indicator = UIActivityIndicatorView(style: .medium)
-        indicator.translatesAutoresizingMaskIntoConstraints = false
-        return indicator
-    }()
-    
-    private var errorTitleLabel: UILabel?
-    private var errorMessageLabel: UILabel?
-    
-    enum Section: Hashable {
-        case movies
-    }
+    private let loadingView = UILoadingView()
+    private let errorView = UIErrorView()
     
     init(viewModel: MoviesListViewModel, coordinator: MoviesCoordinator) {
         self.viewModel = viewModel
@@ -125,7 +44,6 @@ final class MoviesListViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        
         setupUI()
         configureDataSource()
         bindViewModel()
@@ -136,6 +54,14 @@ final class MoviesListViewController: UIViewController {
         title = "Popular Movies"
         navigationItem.largeTitleDisplayMode = .always
         view.backgroundColor = .systemGroupedBackground
+        
+        loadingView.translatesAutoresizingMaskIntoConstraints = false
+        
+        errorView.isHidden = true
+        errorView.translatesAutoresizingMaskIntoConstraints = false
+        errorView.onRetry = { [weak self] in
+            self?.viewModel.retry()
+        }
         
         view.addSubview(collectionView)
         view.addSubview(loadingView)
@@ -181,11 +107,9 @@ final class MoviesListViewController: UIViewController {
         viewModel.$isLoadingMore
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isLoading in
-                if isLoading {
-                    self?.footerLoadingView.startAnimating()
-                } else {
-                    self?.footerLoadingView.stopAnimating()
-                    self?.collectionView.refreshControl?.endRefreshing()
+                guard let self else { return }
+                if !isLoading {
+                    self.collectionView.refreshControl?.endRefreshing()
                 }
             }
             .store(in: &cancellables)
@@ -195,34 +119,32 @@ final class MoviesListViewController: UIViewController {
         switch state {
         case .idle:
             break
+            
         case .loading:
-            loadingView.isHidden = false
+            if viewModel.movies.isEmpty {
+                loadingView.start()
+                collectionView.isHidden = true
+            }
             errorView.isHidden = true
-            collectionView.isHidden = true
             
         case .success:
-            loadingView.isHidden = true
+            loadingView.stop()
             errorView.isHidden = true
             collectionView.isHidden = false
             collectionView.refreshControl?.endRefreshing()
             
         case .failure(let error):
-            loadingView.isHidden = true
+            loadingView.stop()
             collectionView.refreshControl?.endRefreshing()
             
             if viewModel.movies.isEmpty {
+                errorView.configure(message: error.errorDescription ?? "Unknown error")
                 errorView.isHidden = false
                 collectionView.isHidden = true
-                errorMessageLabel?.text = error.errorDescription
             } else {
-                // Show toast/banner for pagination error
                 showErrorBanner(message: error.errorDescription ?? "Failed to load more movies")
             }
         }
-    }
-    
-    @objc private func retryTapped() {
-        viewModel.retry()
     }
     
     @objc private func pullToRefresh() {

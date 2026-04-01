@@ -15,7 +15,6 @@ protocol NetworkServiceProtocol {
 
 final class NetworkService: NetworkServiceProtocol {
 
-
     private let session: URLSession
     private let apiKey: String
     private let decoder: JSONDecoder
@@ -28,7 +27,6 @@ final class NetworkService: NetworkServiceProtocol {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         self.decoder = decoder
     }
-
 
     func fetchPopularMovies(page: Int) async throws -> MoviesResponse {
         guard let url = APIEndpoint.popularMovies(page: page).url else {
@@ -43,7 +41,6 @@ final class NetworkService: NetworkServiceProtocol {
         }
         return try await fetch(url: url)
     }
-
 
     private func fetch<T: Decodable>(url: URL) async throws -> T {
         var request = URLRequest(url: url)
